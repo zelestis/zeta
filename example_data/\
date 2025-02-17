@@ -1,0 +1,270 @@
+import random
+import unittest
+import shutil
+import os
+import sys
+import time
+import csv
+import signal
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+
+
+@dataclass(frozen=False)
+class Config:
+    """Configuration for game parameters."""
+
+    ADD_SUB_RANGE: list = field(
+        default_factory=lambda: list(range(2, 101))
+    )  # 2 to 100 inclusive
+    MULT_SMALL_RANGE: list = field(
+        default_factory=lambda: list(range(2, 13))
+    )  # 2 to 12 inclusive
+    MULT_BIG_RANGE: list = field(
+        default_factory=lambda: list(range(2, 101))
+    )  # 2 to 100 inclusive
+    TIMER_DURATION: int = 1800  # 30 minutes in seconds
+    SCREEN_WIDTH: int = 80  # Default terminal width if not detected
+    DETAILED_LOG_FILE: str = str(
+        Path.home() / ".zeta" / "zeta_log_summary.csv"
+    )  # Logs game summary
+    SUMMARY_LOG_FILE: str = str(
+        Path.home() / ".zeta" / "zeta_log.csv"
+    )  # Logs every question
+
+
+# Create a global instance of Config
+config = Config()
+
+
+def clear_screen():
+    """Clears the terminal for a clean display."""
+    os.system("clear" if os.name == "posix" else "cls")
+
+
+def center_text(text):
+    """Centers text based on the terminal width."""
+    terminal_width = shutil.get_terminal_size((Config.SCREEN_WIDTH, 20)).columns
+    return text.center(terminal_width)
+
+
+def print_header():
+    """Prints the game header."""
+    clear_screen()
+    print("\n" + center_text("=" * 50))
+    print(center_text("Welcome to the Zelestis Arithmetic!"))
+    print(center_text("Solve each problem correctly to proceed."))
+    print(center_text("Type 'exit' to quit at any time."))
+    print(center_text("=" * 50) + "\n")
+
+
+def generate_problem():
+    """Generate a random arithmetic problem based on the given parameters."""
+    operation = random.choice(["+", "-", "*", "/"])
+
+    if operation == "+":  # Addition
+        num1 = random.choice(config.ADD_SUB_RANGE)
+        num2 = random.choice(config.ADD_SUB_RANGE)
+        answer = num1 + num2
+
+    elif operation == "-":  # Subtraction
+        num1 = random.choice(config.ADD_SUB_RANGE)
+        num2 = random.choice(config.ADD_SUB_RANGE)
+        num1, num2 = max(num1, num2), min(num1, num2)
+        answer = num1 - num2
+
+    elif operation == "*":  # Multiplication
+        num1 = random.choice(config.MULT_SMALL_RANGE)
+        num2 = random.choice(config.MULT_BIG_RANGE)
+        answer = num1 * num2
+
+    else:  # Division
+        num2 = random.choice(config.MULT_BIG_RANGE)
+        num1 = num2 * random.choice(config.MULT_SMALL_RANGE)
+        answer = num1 // num2
+
+    return f"{num1} {operation} {num2}", answer
+
+
+def log_detailed(timestamp, question, correct_answer, user_answer, time_taken, status):
+    """Logs each question attempt in a detailed CSV file."""
+    os.makedirs(os.path.dirname(Config.DETAILED_LOG_FILE), exist_ok=True)
+    file_exists = os.path.isfile(Config.DETAILED_LOG_FILE)
+
+    with open(Config.DETAILED_LOG_FILE, "a", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        if not file_exists:
+            writer.writerow(["datetime", "time_taken", "question", "answer", "correct"])
+        writer.writerow(
+            [timestamp, time_taken, question, user_answer, status == "Correct"]
+        )
+
+
+def log_summary(session_data):
+    """Logs the full game session to the summary CSV file."""
+    os.makedirs(os.path.dirname(Config.SUMMARY_LOG_FILE), exist_ok=True)
+    file_exists = os.path.isfile(Config.SUMMARY_LOG_FILE)
+
+    with open(Config.SUMMARY_LOG_FILE, "a", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        if not file_exists:
+            writer.writerow(
+                ["Timestamp", "Duration (s)", "Final Score", "Questions & Answers"]
+            )
+        writer.writerow(session_data)
+
+
+def format_session_data(start_time, score, question_log):
+    """Formats session data into a single CSV row for summary logging."""
+    duration = round(time.time() - start_time, 2)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return [timestamp, duration, score]
+
+
+def time_up_message(score, start_time, question_log):
+    """Displays time-up message and logs session data."""
+    session_data = format_session_data(start_time, score, question_log)
+    log_summary(session_data)
+    clear_screen()
+    print("\n" + center_text("=" * 50))
+    print(center_text("Time's up!"))
+    print(center_text(f"Game over! Your final score is: {score}"))
+    print(center_text("=" * 50) + "\n")
+
+
+def play_game():
+    start_time = time.time()
+    print_header()
+    print(
+        center_text("Playing for {} minutes...\n".format(Config.TIMER_DURATION // 60))
+    )
+    score = 0
+    question_log = []  # Stores questions and answers
+
+    def exit_gracefully(sig, frame):
+        """Handles Ctrl+C to ensure data is saved before exiting."""
+        time_up_message(score, start_time, question_log)
+        sys.exit(0)
+
+    # Catch Ctrl+C (SIGINT)
+    signal.signal(signal.SIGINT, exit_gracefully)
+
+    while True:
+        if time.time() - start_time >= Config.TIMER_DURATION:
+            time_up_message(score, start_time, question_log)
+            return
+
+        problem, answer = generate_problem()
+        question_start_time = time.time()
+
+        while True:
+            if time.time() - start_time >= Config.TIMER_DURATION:
+                time_up_message(score, start_time, question_log)
+                return
+
+            prompt = center_text(f"{problem} = ").rstrip()
+            user_answer = input(prompt + " ")
+            question_end_time = time.time()
+            time_taken = round(question_end_time - question_start_time, 2)
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if user_answer.lower() == "exit":
+                time_up_message(score, start_time, question_log)
+                return
+
+            try:
+                if float(user_answer) == answer:
+                    question_log.append(
+                        f"{problem} = {user_answer} (Correct, {time_taken}s)"
+                    )
+                    log_detailed(
+                        timestamp, problem, answer, user_answer, time_taken, "Correct"
+                    )
+                    print_header()
+                    score += 1
+                    break
+                else:
+                    question_log.append(
+                        f"{problem} = {user_answer} (Wrong, {time_taken}s)"
+                    )
+                    log_detailed(
+                        timestamp, problem, answer, user_answer, time_taken, "Wrong"
+                    )
+                    print(center_text("❌ Wrong! Try again."), end="")
+            except ValueError:
+                question_log.append(
+                    f"{problem} = {user_answer} (Invalid Input, {time_taken}s)"
+                )
+                log_detailed(
+                    timestamp, problem, answer, user_answer, time_taken, "Invalid Input"
+                )
+                print(center_text("❌ Invalid input. Please enter a number."), end="")
+
+
+class TestZetaGame(unittest.TestCase):
+    def setUp(self):
+        """Create temporary test directory and set test config files."""
+        self.test_dir = str(Path.home() / ".zeta_test")
+        os.makedirs(self.test_dir, exist_ok=True)
+        self.original_detailed_log = config.DETAILED_LOG_FILE
+        self.original_summary_log = config.SUMMARY_LOG_FILE
+        config.DETAILED_LOG_FILE = os.path.join(self.test_dir, "test_detailed_log.csv")
+        config.SUMMARY_LOG_FILE = os.path.join(self.test_dir, "test_summary_log.csv")
+
+    def tearDown(self):
+        """Clean up test directory and restore original config paths."""
+        shutil.rmtree(self.test_dir)
+        config.DETAILED_LOG_FILE = self.original_detailed_log
+        config.SUMMARY_LOG_FILE = self.original_summary_log
+
+    def test_problem_randomness(self):
+        problems = {generate_problem()[0] for _ in range(100)}
+        self.assertGreater(len(problems), 1, "Problems are not sufficiently random.")
+
+    def test_division_integer(self):
+        for _ in range(100):
+            problem, answer = generate_problem()
+            if "/" in problem:
+                self.assertIsInstance(answer, int, "Division result is not an integer.")
+
+    def test_log_detailed_format(self):
+        log_detailed("2025-02-01 12:00:00", "10 + 5", 15, 15, 2.5, "Correct")
+        with open(Config.DETAILED_LOG_FILE, "r") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            self.assertEqual(len(rows[-1]), 5, "Detailed log format is incorrect.")
+
+    def test_log_summary_format(self):
+        log_summary(["2025-02-01 12:00:00", 300, 10, "10 + 5 = 15"])
+        with open(Config.SUMMARY_LOG_FILE, "r") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            self.assertEqual(len(rows[-1]), 4, "Summary log format is incorrect.")
+
+    def test_multiple_games_log_valid_csv(self):
+        log_summary(["2025-02-01 12:00:00", 300, 10, "10 + 5 = 15"])
+        log_summary(["2025-02-01 12:10:00", 200, 5, "8 - 3 = 5"])
+        with open(Config.SUMMARY_LOG_FILE, "r") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+            self.assertGreaterEqual(
+                len(rows), 2, "Multiple logs are not forming a valid CSV."
+            )
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "test":
+            config.TIMER_DURATION = 120  # 2 minutes for test mode
+            sys.argv = [sys.argv[0]]  # Reset sys.argv to avoid unittest issues
+            unittest.main()
+        elif sys.argv[1] == "exam":
+            config.TIMER_DURATION = 120  # 30 minutes for training mode
+            play_game()
+        else:
+            print("Invalid argument. Use 'test' or 'train'")
+            sys.exit(1)
+    else:
+        config.TIMER_DURATION = 60 * 30  # Default to 2 minutes
+        play_game()
