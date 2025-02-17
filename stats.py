@@ -115,7 +115,13 @@ with PdfPages(pdf_filename) as pdf:
     pdf.savefig(fig)
     plt.close(fig)
 
-    # Graph 2: Last 24 Hours – Average Time per Question by Game with Smoothed Mean by Operator
+    # Graph 2: Last 24 Hours – Split into 5 subplots (Overall + Each Operator)
+    fig = plt.figure(figsize=(12, 15))
+    gs = fig.add_gridspec(3, 2, height_ratios=[1.2, 1, 1])
+    
+    # Overall plot (top, spanning both columns)
+    ax_overall = fig.add_subplot(gs[0, :])
+    
     # First, get games from last 24 hours
     last_24h_games = df_games[
         df_games["Timestamp"] >= df_games["Timestamp"].max() - pd.Timedelta(hours=24)
@@ -136,16 +142,10 @@ with PdfPages(pdf_filename) as pdf:
         (last_24h_merged["datetime"] <= last_24h_merged["game_end"])
     ]
     
-    operators = ["+", "-", "*", "/"]
-    colors = {'+':"blue", '-':"green", '*':"red", '/':"purple"}
-    
-    fig, ax = plt.subplots(figsize=(12, 6))
-    
-    # Calculate game-level averages
+    # Calculate and plot overall averages
     game_overall = last_24h_merged.groupby("Timestamp")["time_taken"].mean().reset_index()
     
-    # Plot overall scatter points
-    ax.scatter(
+    ax_overall.scatter(
         game_overall["Timestamp"],
         game_overall["time_taken"],
         color="black",
@@ -153,12 +153,11 @@ with PdfPages(pdf_filename) as pdf:
         alpha=0.6
     )
     
-    # Add overall smoothed mean line
     if len(game_overall) > 1:
         game_overall["smoothed"] = game_overall["time_taken"].rolling(
             window=3, min_periods=1
         ).mean()
-        ax.plot(
+        ax_overall.plot(
             game_overall["Timestamp"],
             game_overall["smoothed"],
             color="black",
@@ -166,23 +165,33 @@ with PdfPages(pdf_filename) as pdf:
             label="Overall Smoothed Mean"
         )
     
-    # Then plot operator-specific data
-    for op in operators:
+    ax_overall.set_title("Overall Average Time per Question (Last 24 Hours)")
+    ax_overall.set_ylabel("Time (s)")
+    ax_overall.legend()
+    ax_overall.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+    ax_overall.tick_params(axis='x', rotation=45)
+    
+    # Operator plots (2x2 grid below)
+    operators = ["+", "-", "*", "/"]
+    colors = {'+':"blue", '-':"green", '*':"red", '/':"purple"}
+    
+    for idx, op in enumerate(operators):
+        row = 1 + idx // 2
+        col = idx % 2
+        ax = fig.add_subplot(gs[row, col])
+        
         op_data = last_24h_merged[last_24h_merged["operator"] == op]
         if not op_data.empty:
-            # Calculate averages per game for this operator
             game_avg_op = op_data.groupby("Timestamp")["time_taken"].mean().reset_index()
             
-            # Plot scatter points for this operator
             ax.scatter(
                 game_avg_op["Timestamp"],
                 game_avg_op["time_taken"],
                 color=colors[op],
-                label=f"{op} Average",
+                label=f"Average",
                 alpha=0.6
             )
             
-            # Add smoothed mean line for this operator
             if len(game_avg_op) > 1:
                 game_avg_op["smoothed"] = game_avg_op["time_taken"].rolling(
                     window=3, min_periods=1
@@ -192,16 +201,16 @@ with PdfPages(pdf_filename) as pdf:
                     game_avg_op["smoothed"],
                     color=colors[op],
                     linestyle="--",
-                    label=f"{op} Smoothed Mean"
+                    label="Smoothed Mean"
                 )
+        
+        ax.set_title(f"Operator: {op}")
+        ax.set_ylabel("Time (s)")
+        ax.legend()
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
+        ax.tick_params(axis='x', rotation=45)
     
-    ax.set_xlabel("Game Start Time")
-    ax.set_ylabel("Average Time per Question (s)")
-    ax.set_title("Average Time per Question by Game and Operator (Last 24 Hours)")
-    ax.legend()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    plt.xticks(rotation=45)
+    plt.suptitle("Average Time per Question by Game and Operator (Last 24 Hours)", y=0.95)
     plt.tight_layout()
     pdf.savefig(fig)
     plt.close(fig)
